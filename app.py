@@ -7,8 +7,6 @@ import joblib
 import os
 import math
 import matplotlib.pyplot as plt
-from IPython.display import display, HTML, clear_output
-import ipywidgets as widgets
 from datetime import datetime, timedelta
 
 class HyderabadRidePricePrediction:
@@ -248,262 +246,171 @@ class HyderabadRidePricePrediction:
             price = max(price, self.minimum_fare)
 
             # Add some random noise (±5%)
-            price = price * (0.95 + 0.1 * np.random.random())
+            price = price * (1 + np.random.uniform(-0.05, 0.05))
 
             # Round to nearest rupee
             price = round(price)
 
-            # Different service tiers
-            service_type = np.random.choice(["Economy", "Standard", "Premium"])
-            if service_type == "Economy":
-                service_factor = 0.85
-            elif service_type == "Standard":
-                service_factor = 1.0
-            else:  # Premium
-                service_factor = 1.3
-
-            final_price = round(price * service_factor)
-
+            # Add to data
             data.append({
-                "origin": origin,
-                "destination": destination,
-                "distance_km": distance,
-                "duration_min": duration,
-                "time_of_day": time_of_day,
-                "hour": hour,
-                "weather": weather,
-                "day_type": day_type,
-                "traffic": traffic,
-                "service_type": service_type,
-                "price": final_price
+                'origin': origin,
+                'destination': destination,
+                'distance': distance,
+                'duration': duration,
+                'hour': hour,
+                'time_of_day': time_of_day,
+                'weather': weather,
+                'day_type': day_type,
+                'traffic': traffic,
+                'price': price
             })
 
-        # Create DataFrame
+        # Convert to DataFrame
         df = pd.DataFrame(data)
 
-        # Save data
-        df.to_csv("hyderabad_ride_data.csv", index=False)
-
-        # Show some statistics
-        print(f"Generated {n_samples} ride samples with realistic Hyderabad pricing")
-        print(f"Average ride price: ₹{df['price'].mean():.2f}")
-        print(f"Price range: ₹{df['price'].min()} - ₹{df['price'].max()}")
-
-        # Train model
+        # Train the model
         self.train_model(df)
 
-        return df
-
     def train_model(self, data):
-        """Train RandomForest model on the data"""
-        print("Training model on Hyderabad ride data...")
+        """Train the model on the generated data"""
+        print("Training model...")
 
-        # Create LabelEncoder for locations
+        # Encode categorical features
         self.location_encoder = LabelEncoder()
-        all_locations = np.concatenate([data["origin"].values, data["destination"].values])
-        self.location_encoder.fit(all_locations)
+        data['origin_encoded'] = self.location_encoder.fit_transform(data['origin'])
+        data['destination_encoded'] = self.location_encoder.transform(data['destination'])
 
-        # Create encoders for other categorical features
+        # Encode other categorical features
+        time_of_day_encoder = LabelEncoder()
         weather_encoder = LabelEncoder()
-        weather_encoder.fit(data["weather"])
+        day_type_encoder = LabelEncoder()
+        traffic_encoder = LabelEncoder()
 
-        service_encoder = LabelEncoder()
-        service_encoder.fit(data["service_type"])
+        data['time_of_day_encoded'] = time_of_day_encoder.fit_transform(data['time_of_day'])
+        data['weather_encoded'] = weather_encoder.fit_transform(data['weather'])
+        data['day_type_encoded'] = day_type_encoder.fit_transform(data['day_type'])
+        data['traffic_encoded'] = traffic_encoder.fit_transform(data['traffic'])
 
         # Prepare features
-        X = pd.DataFrame({
-            "origin": self.location_encoder.transform(data["origin"]),
-            "destination": self.location_encoder.transform(data["destination"]),
-            "distance_km": data["distance_km"],
-            "duration_min": data["duration_min"],
-            "hour": data["hour"],
-            "time_morning": (data["time_of_day"] == "Morning").astype(int),
-            "time_afternoon": (data["time_of_day"] == "Afternoon").astype(int),
-            "time_evening": (data["time_of_day"] == "Evening").astype(int),
-            "time_night": (data["time_of_day"] == "Night").astype(int),
-            "weather": weather_encoder.transform(data["weather"]),
-            "day_weekday": (data["day_type"] == "Weekday").astype(int),
-            "day_weekend": (data["day_type"] == "Weekend").astype(int),
-            "day_holiday": (data["day_type"] == "Holiday").astype(int),
-            "traffic_light": (data["traffic"] == "Light").astype(int),
-            "traffic_moderate": (data["traffic"] == "Moderate").astype(int),
-            "traffic_heavy": (data["traffic"] == "Heavy").astype(int),
-            "service": service_encoder.transform(data["service_type"])
-        })
+        features = [
+            'origin_encoded', 'destination_encoded', 'distance', 'duration',
+            'hour', 'time_of_day_encoded', 'weather_encoded',
+            'day_type_encoded', 'traffic_encoded'
+        ]
 
-        # Target
-        y = data["price"]
+        X = data[features]
+        y = data['price']
+
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
         # Scale features
         self.scaler = StandardScaler()
-        X_scaled = self.scaler.fit_transform(X)
-
-        # Train-test split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=0.2, random_state=42
-        )
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
 
         # Train model
-        self.model = RandomForestRegressor(
-            n_estimators=150,
-            max_depth=20,
-            min_samples_split=5,
-            min_samples_leaf=2,
-            random_state=42,
-            n_jobs=-1
-        )
-        self.model.fit(X_train, y_train)
+        self.model = RandomForestRegressor(n_estimators=100, random_state=42)
+        self.model.fit(X_train_scaled, y_train)
 
-        # Save model
+        # Save model and encoders
         joblib.dump(self.model, "hyderabad_ride_model.joblib")
         joblib.dump(self.location_encoder, "hyderabad_location_encoder.joblib")
         joblib.dump(self.scaler, "hyderabad_feature_scaler.joblib")
 
-        # Evaluate model
-        train_score = self.model.score(X_train, y_train)
-        test_score = self.model.score(X_test, y_test)
-        print(f"Model R² score - Train: {train_score:.4f}, Test: {test_score:.4f}")
-
-        # Feature importance
-        feature_importance = pd.DataFrame({
-            'Feature': X.columns,
-            'Importance': self.model.feature_importances_
-        }).sort_values(by='Importance', ascending=False)
-
-        print("\nTop 10 important features:")
-        print(feature_importance.head(10))
-
-        return self.model
+        print("Model trained and saved successfully")
 
     def predict_ride_price(self, origin, destination, time_of_day=None, hour=None,
                           weather="Clear", day_type="Weekday", traffic="Moderate",
                           service_type="Standard"):
-        """Predict ride price based on user inputs"""
-        # Validate inputs
-        if origin == destination:
-            return {
-                "error": "Origin and destination cannot be the same",
-                "price": None,
-                "distance": None,
-                "duration": None
-            }
-
-        # Set current hour if not provided
-        if hour is None:
-            current_hour = datetime.now().hour
-            hour = current_hour
-
-        # Set time of day based on hour if not provided
-        if time_of_day is None:
-            if 5 <= hour < 12:
-                time_of_day = "Morning"
-            elif 12 <= hour < 17:
-                time_of_day = "Afternoon"
-            elif 17 <= hour < 21:
-                time_of_day = "Evening"
-            else:
-                time_of_day = "Night"
-
-        # Calculate distance
-        distance = self.calculate_distance(origin, destination)
-
-        # Calculate duration
-        duration = self.calculate_trip_duration(distance, traffic)
-
+        """Predict the price for a ride between two locations"""
         try:
-            # Transform origin and destination
+            # Calculate distance and duration
+            distance = self.calculate_distance(origin, destination)
+            duration = self.calculate_trip_duration(distance, traffic)
+
+            # If time_of_day is not provided, determine it from hour
+            if time_of_day is None and hour is not None:
+                if 5 <= hour < 12:
+                    time_of_day = "Morning"
+                elif 12 <= hour < 17:
+                    time_of_day = "Afternoon"
+                elif 17 <= hour < 21:
+                    time_of_day = "Evening"
+                else:
+                    time_of_day = "Night"
+
+            # Encode features
             origin_encoded = self.location_encoder.transform([origin])[0]
             destination_encoded = self.location_encoder.transform([destination])[0]
 
-            # Create feature vector
-            X = pd.DataFrame({
-                "origin": [origin_encoded],
-                "destination": [destination_encoded],
-                "distance_km": [distance],
-                "duration_min": [duration],
-                "hour": [hour],
-                "time_morning": [1 if time_of_day == "Morning" else 0],
-                "time_afternoon": [1 if time_of_day == "Afternoon" else 0],
-                "time_evening": [1 if time_of_day == "Evening" else 0],
-                "time_night": [1 if time_of_day == "Night" else 0],
-                "weather": [0],  # Default encoding for "Clear"
-                "day_weekday": [1 if day_type == "Weekday" else 0],
-                "day_weekend": [1 if day_type == "Weekend" else 0],
-                "day_holiday": [1 if day_type == "Holiday" else 0],
-                "traffic_light": [1 if traffic == "Light" else 0],
-                "traffic_moderate": [1 if traffic == "Moderate" else 0],
-                "traffic_heavy": [1 if traffic == "Heavy" else 0],
-                "service": [1 if service_type == "Standard" else 0 if service_type == "Economy" else 2]
-            })
+            # Create feature dictionary with correct feature names
+            features = {
+                'origin': origin_encoded,
+                'destination': destination_encoded,
+                'distance_km': distance,
+                'duration_min': duration,
+                'hour': hour if hour is not None else 12,
+                'time_morning': 1 if time_of_day == "Morning" else 0,
+                'time_afternoon': 1 if time_of_day == "Afternoon" else 0,
+                'time_evening': 1 if time_of_day == "Evening" else 0,
+                'time_night': 1 if time_of_day == "Night" else 0,
+                'weather': 0 if weather == "Clear" else 1 if weather == "Cloudy" else 2 if weather == "Light Rain" else 3 if weather == "Rainy" else 4,
+                'day_weekday': 1 if day_type == "Weekday" else 0,
+                'day_weekend': 1 if day_type == "Weekend" else 0,
+                'day_holiday': 1 if day_type == "Holiday" else 0,
+                'traffic_light': 1 if traffic == "Light" else 0,
+                'traffic_moderate': 1 if traffic == "Moderate" else 0,
+                'traffic_heavy': 1 if traffic == "Heavy" else 0
+            }
+
+            # Convert to DataFrame
+            X = pd.DataFrame([features])
 
             # Scale features
             X_scaled = self.scaler.transform(X)
 
-            # Predict price for standard service
-            standard_price = self.model.predict(X_scaled)[0]
+            # Make prediction
+            base_price = self.model.predict(X_scaled)[0]
 
-            # Calculate prices for different service types
-            if service_type == "Standard":
-                predicted_price = standard_price
-            elif service_type == "Economy":
-                predicted_price = standard_price * 0.85
-            else:  # Premium
-                predicted_price = standard_price * 1.3
-
-            # Round to nearest rupee
-            predicted_price = round(predicted_price)
-
-            # Calculate alternative service prices
-            alternatives = {
-                "Economy": round(standard_price * 0.85),
-                "Standard": round(standard_price),
-                "Premium": round(standard_price * 1.3)
+            # Apply service type multiplier
+            service_multipliers = {
+                "Economy": 0.8,
+                "Standard": 1.0,
+                "Premium": 1.3
             }
 
+            price = base_price * service_multipliers.get(service_type, 1.0)
+
+            # Ensure minimum fare
+            price = max(price, self.minimum_fare)
+
+            # Round to nearest rupee
+            price = round(price)
+
+            # Calculate alternatives
+            alternatives = {
+                "Economy": round(base_price * service_multipliers["Economy"]),
+                "Standard": round(base_price * service_multipliers["Standard"]),
+                "Premium": round(base_price * service_multipliers["Premium"])
+            }
+
+            # Format price with Indian Rupee symbol
+            formatted_price = f"₹{price:,}"
+
             return {
-                "price": predicted_price,
-                "currency": "INR",
-                "formatted_price": f"₹{predicted_price}",
+                "price": price,
+                "formatted_price": formatted_price,
                 "distance": distance,
                 "duration": duration,
-                "service_type": service_type,
                 "alternatives": alternatives
             }
 
         except Exception as e:
-            print(f"Error in prediction: {e}")
+            return {"error": f"Error predicting price: {str(e)}"}
 
-            # Fallback to direct calculation if model fails
-            base_price = self.base_fare + (distance * self.per_km_rate) + (duration * self.per_minute_rate)
-
-            # Apply service type factor
-            if service_type == "Economy":
-                service_factor = 0.85
-            elif service_type == "Standard":
-                service_factor = 1.0
-            else:  # Premium
-                service_factor = 1.3
-
-            predicted_price = round(max(base_price * service_factor, self.minimum_fare))
-
-            return {
-                "price": predicted_price,
-                "currency": "INR",
-                "formatted_price": f"₹{predicted_price}",
-                "distance": distance,
-                "duration": duration,
-                "service_type": service_type,
-                "note": "Calculated using fallback method",
-                "alternatives": {
-                    "Economy": round(max(base_price * 0.85, self.minimum_fare)),
-                    "Standard": round(max(base_price, self.minimum_fare)),
-                    "Premium": round(max(base_price * 1.3, self.minimum_fare))
-                }
-            }
-
-# Helper function to determine time of day from hour
 def get_time_of_day(hour):
-    """Convert hour to time of day category"""
+    """Get time of day based on hour"""
     if 5 <= hour < 12:
         return "Morning"
     elif 12 <= hour < 17:
@@ -512,346 +419,3 @@ def get_time_of_day(hour):
         return "Evening"
     else:
         return "Night"
-
-# Create interactive widgets for Colab
-def create_prediction_ui(predictor):
-    """Create interactive UI for ride price prediction"""
-    print("\n🚗 Hyderabad Ride Price Prediction System 🚗\n")
-
-    # Origin dropdown
-    origin_dropdown = widgets.Dropdown(
-        options=predictor.locations,
-        value="Hitech City",
-        description='Origin:',
-        style={'description_width': 'initial'},
-        layout=widgets.Layout(width='300px')
-    )
-
-    # Destination dropdown
-    destination_dropdown = widgets.Dropdown(
-        options=predictor.locations,
-        value="Secunderabad",
-        description='Destination:',
-        style={'description_width': 'initial'},
-        layout=widgets.Layout(width='300px')
-    )
-
-    # Current time checkbox
-    use_current_time = widgets.Checkbox(
-        value=True,
-        description='Use current time',
-        style={'description_width': 'initial'}
-    )
-
-    # Time selection (hour)
-    hour_selector = widgets.IntSlider(
-        value=datetime.now().hour,
-        min=0,
-        max=23,
-        step=1,
-        description='Hour (24h):',
-        disabled=True,
-        style={'description_width': 'initial'},
-        layout=widgets.Layout(width='300px')
-    )
-
-    # Time of day label (automatically updated)
-    time_of_day_label = widgets.Label(value=f"Time of day: {get_time_of_day(hour_selector.value)}")
-
-    # Weather dropdown
-    weather_dropdown = widgets.Dropdown(
-        options=["Clear", "Cloudy", "Light Rain", "Rainy", "Thunderstorm"],
-        value="Clear",
-        description='Weather:',
-        style={'description_width': 'initial'},
-        layout=widgets.Layout(width='300px')
-    )
-
-    # Day type dropdown
-    day_dropdown = widgets.Dropdown(
-        options=["Weekday", "Weekend", "Holiday"],
-        value="Weekday",
-        description='Day Type:',
-        style={'description_width': 'initial'},
-        layout=widgets.Layout(width='300px')
-    )
-
-    # Traffic dropdown
-    traffic_dropdown = widgets.Dropdown(
-        options=["Light", "Moderate", "Heavy"],
-        value="Moderate",
-        description='Traffic:',
-        style={'description_width': 'initial'},
-        layout=widgets.Layout(width='300px')
-    )
-
-    # Service type selection
-    service_type = widgets.RadioButtons(
-        options=['Economy', 'Standard', 'Premium'],
-        value='Standard',
-        description='Service Type:',
-        style={'description_width': 'initial'},
-        layout={'width': 'max-content'}
-    )
-
-    # Output area
-    output = widgets.Output()
-
-    # Update time of day when hour changes
-    def update_time_of_day(change):
-        time_of_day_label.value = f"Time of day: {get_time_of_day(change.new)}"
-
-    hour_selector.observe(update_time_of_day, names='value')
-
-    # Toggle hour selector based on checkbox
-    def toggle_hour_selector(change):
-        hour_selector.disabled = change.new
-        if change.new:  # If using current time
-            hour_selector.value = datetime.now().hour
-
-    use_current_time.observe(toggle_hour_selector, names='value')
-
-    # Predict button
-    def on_predict_button_clicked(b):
-        with output:
-            clear_output()
-
-            # Get input values
-            origin = origin_dropdown.value
-            destination = destination_dropdown.value
-            hour = datetime.now().hour if use_current_time.value else hour_selector.value
-            time_of_day = get_time_of_day(hour)
-            weather = weather_dropdown.value
-            day_type = day_dropdown.value
-            traffic = traffic_dropdown.value
-            service = service_type.value
-
-            # Make prediction
-            result = predictor.predict_ride_price(
-                origin=origin,
-                destination=destination,
-                time_of_day=time_of_day,
-                hour=hour,
-                weather=weather,
-                day_type=day_type,
-                traffic=traffic,
-                service_type=service
-            )
-
-            if "error" in result:
-                print(f"Error: {result['error']}")
-                return
-
-            # Current time
-            current_time = datetime.now().strftime("%H:%M")
-            estimated_arrival = (datetime.now() + timedelta(minutes=result['duration'])).strftime("%H:%M")
-
-            # Display ride details
-            print(f"\n🚗 {service} Ride: {origin} to {destination}")
-            print(f"🕒 Current time: {current_time} ({time_of_day})")
-            print(f"🛣 Distance: {result['distance']:.1f} km")
-            print(f"⏱ Estimated duration: {result['duration']} minutes (arrival ~{estimated_arrival})")
-            print(f"💰 Predicted Price: {result['formatted_price']}")
-
-            # Display conditions
-            print(f"\nConditions: {weather} weather, {day_type}, {traffic} traffic")
-
-            # Show alternatives
-            print("\nAvailable options:")
-            alternatives = result['alternatives']
-
-            # Plot the options
-            plt.figure(figsize=(10, 5))
-            services = list(alternatives.keys())
-            prices = list(alternatives.values())
-
-            colors = ['#4CAF50', '#2196F3', '#FF9800']
-            selected_idx = services.index(service)
-
-            bar_colors = ['lightgray'] * len(services)
-            bar_colors[selected_idx] = colors[selected_idx]
-
-            plt.bar(services, prices, color=bar_colors)
-
-            # Add price labels on top of bars
-            for i, price in enumerate(prices):
-                plt.text(i, price + 5, f"₹{price}", ha='center', fontweight='bold')
-
-                # Add "SELECTED" label to chosen service
-                if i == selected_idx:
-                    plt.text(i, price/2, "SELECTED", ha='center', color='white', fontweight='bold', rotation=90)
-
-            plt.title('Ride Price Comparison')
-            plt.ylabel('Price (₹)')
-            plt.ylim(0, max(prices) * 1.2)
-            plt.grid(axis='y', linestyle='--', alpha=0.3)
-            plt.show()
-
-            # Show economical recommendation
-            min_price = min(alternatives.values())
-            min_service = [k for k, v in alternatives.items() if v == min_price][0]
-
-            if service != min_service:
-                savings = alternatives[service] - min_price
-                print(f"\n💡 Tip: Choose '{min_service}' to save ₹{savings}")
-            else:
-                print(f"\n💡 You've selected the most economical option!")
-
-    predict_button = widgets.Button(
-        description='Predict Price',
-        button_style='info',
-        icon='car'
-    )
-    predict_button.on_click(on_predict_button_clicked)
-
-    # Map button to show the route
-    def on_map_button_clicked(b):
-        with output:
-            clear_output()
-            origin = origin_dropdown.value
-            destination = destination_dropdown.value
-
-            if origin == destination:
-                print("Error: Origin and destination cannot be the same")
-                return
-
-            # Get coordinates
-            if origin in predictor.location_coords and destination in predictor.location_coords:
-                origin_coords = predictor.location_coords[origin]
-                dest_coords = predictor.location_coords[destination]
-
-                # Generate Google Maps URL
-                maps_url = f"https://www.google.com/maps/dir/{origin_coords[0]},{origin_coords[1]}/{dest_coords[0]},{dest_coords[1]}"
-
-                print(f"Route from {origin} to {destination}")
-                print(f"\nOpen this URL in your browser to view the route:")
-                print(maps_url)
-
-                # Display a simple map visualization
-                plt.figure(figsize=(12, 8))
-
-                # Plot all locations
-                x_coords = [coords[1] for coords in predictor.location_coords.values()]
-                y_coords = [coords[0] for coords in predictor.location_coords.values()]
-                plt.scatter(x_coords, y_coords, color='gray', alpha=0.5, s=30)
-
-                # Add location names
-                for loc, coords in predictor.location_coords.items():
-                    plt.annotate(loc, (coords[1], coords[0]), fontsize=8, alpha=0.7)
-
-                # Highlight origin and destination
-                origin_coords = predictor.location_coords[origin]
-                dest_coords = predictor.location_coords[destination]
-
-                plt.scatter([origin_coords[1]], [origin_coords[0]], color='green', s=100, label='Origin')
-                plt.scatter([dest_coords[1]], [dest_coords[0]], color='red', s=100, label='Destination')
-
-                # Draw line between origin and destination
-                plt.plot([origin_coords[1], dest_coords[1]], [origin_coords[0], dest_coords[0]], 'b-', alpha=0.7)
-
-                plt.title(f'Route from {origin} to {destination}')
-                plt.xlabel('Longitude')
-                plt.ylabel('Latitude')
-                plt.legend()
-                plt.grid(True, alpha=0.3)
-                plt.tight_layout()
-                plt.show()
-
-                # Show distance
-                distance = predictor.calculate_distance(origin, destination)
-                print(f"\nDirect distance: {distance:.2f} km")
-            else:
-                print("Location coordinates not available for mapping")
-
-    map_button = widgets.Button(
-        description='Show Map',
-        button_style='success',
-        icon='map'
-    )
-    map_button.on_click(on_map_button_clicked)
-
-    # Layout UI elements
-    ui_title = widgets.HTML("<h2>🚕 Hyderabad Ride Price Prediction</h2>")
-    location_box = widgets.VBox([origin_dropdown, destination_dropdown])
-
-    time_box = widgets.VBox([
-        use_current_time,
-        hour_selector,
-        time_of_day_label
-    ])
-
-    conditions_box = widgets.VBox([
-        weather_dropdown,
-        day_dropdown,
-        traffic_dropdown
-    ])
-
-    options_box = widgets.VBox([widgets.HTML("<h4>Ride Options</h4>"), service_type])
-
-    inputs_box = widgets.HBox([
-        widgets.VBox([widgets.HTML("<h4>Locations</h4>"), location_box]),
-        widgets.VBox([widgets.HTML("<h4>Time</h4>"), time_box]),
-        widgets.VBox([widgets.HTML("<h4>Conditions</h4>"), conditions_box]),
-        options_box
-    ])
-
-    button_box = widgets.HBox([predict_button, map_button])
-
-    # Display the UI
-    display(ui_title)
-    display(inputs_box)
-    display(button_box)
-    display(output)
-
-    return {
-        'origin': origin_dropdown,
-        'destination': destination_dropdown,
-        'hour': hour_selector,
-        'weather': weather_dropdown,
-        'day_type': day_dropdown,
-        'traffic': traffic_dropdown,
-        'service_type': service_type,
-        'predict': predict_button,
-        'map': map_button,
-        'output': output
-    }
-
-
-def main():
-    """Main function to run the prediction system"""
-    print("Starting Hyderabad Ride Price Prediction System...")
-
-    # Initialize the predictor
-    predictor = HyderabadRidePricePrediction()
-
-    # Show some sample predictions
-    print("\nGenerating sample predictions...")
-    sample_predictions = [
-        predictor.predict_ride_price("Hitech City", "Secunderabad"),
-        predictor.predict_ride_price("Banjara Hills", "Charminar",
-                                    weather="Rainy", traffic="Heavy"),
-        predictor.predict_ride_price("Ameerpet", "Madhapur",
-                                    time_of_day="Evening", service_type="Premium")
-    ]
-
-    for i, prediction in enumerate(sample_predictions):
-        print(f"\nSample Prediction {i+1}:")
-        print(f"Price: {prediction['formatted_price']}")
-        print(f"Distance: {prediction['distance']:.1f} km")
-        print(f"Duration: {prediction['duration']} minutes")
-
-    # Create and display the UI
-    print("\nCreating interactive UI...")
-    ui_components = create_prediction_ui(predictor)
-
-    print("\nSystem ready! Use the UI above to make predictions.")
-    return predictor
-
-
-# Helper function to run the system
-def run_hyderabad_ride_prediction():
-    """Run the Hyderabad Ride Price Prediction System"""
-    return main()
-
-# Run the system when the cell is executed
-predictor = main()  # Call main() directly to run the system
